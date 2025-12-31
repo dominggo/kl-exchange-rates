@@ -1,0 +1,18 @@
+2025-12-31 15:50:30,894 - INFO - ==================================================
+2025-12-31 15:50:30,895 - INFO - Exchange Rate Bot started
+2025-12-31 15:50:30,897 - INFO - ==================================================
+2025-12-31 15:50:30,998 - INFO - package: mysql.connector.plugins
+2025-12-31 15:50:30,998 - INFO - plugin_name: mysql_native_password
+2025-12-31 15:50:31,000 - INFO - AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+2025-12-31 15:50:31,089 - INFO - Successfully connected to database
+2025-12-31 15:50:33,095 - INFO - Fetching rates from Bukit Bintang: https://www.jalinanduta.com/bukit-bintang/
+2025-12-31 15:50:34,463 - WARNING - No rates found at Bukit Bintang
+2025-12-31 15:50:34,467 - INFO - Saved HTML to debug_Bukit_Bintang.html for inspection
+2025-12-31 15:50:34,468 - WARNING - No rates fetched for Bukit Bintang
+2025-12-31 15:50:36,479 - INFO - Fetching rates from Masjid India: https://www.jalinanduta.com/masjid-india/
+2025-12-31 15:50:37,351 - WARNING - No rates found at Masjid India
+2025-12-31 15:50:37,387 - INFO - Saved HTML to debug_Masjid_India.html for inspection
+2025-12-31 15:50:37,388 - WARNING - No rates fetched for Masjid India
+2025-12-31 15:50:38,900 - INFO - Message sent to Telegram successfully
+2025-12-31 15:50:38,905 - INFO - Exchange rate bot completed successfully
+2025-12-31 15:50:38,937 - INFO - Database connection closed
