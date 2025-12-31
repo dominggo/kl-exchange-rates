@@ -1,0 +1,15 @@
+# Exchange Rate Telegram Bot Requirements
+
+# Web scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Browser automation (for JavaScript-heavy sites)
+selenium>=4.15.0
+
+# Database
+mysql-connector-python>=8.0.33
+
+# HTML parsing (alternative parser)
+html5lib>=1.1
