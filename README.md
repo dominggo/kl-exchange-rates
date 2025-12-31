@@ -417,6 +417,23 @@ For issues or questions:
 4. Test manual execution: `python3 exchange_rate_bot.py`
 5. Check debug HTML files if scraping fails
 
+## Future Plans
+
+Planned additional data sources to be integrated:
+
+- **AntaraDuit** - Currency exchange comparison platform
+  - URL: [https://www.antaraduit.com.my/exchange-rate.php](https://www.antaraduit.com.my/exchange-rate.php)
+
+- **KL Money Changer** - Rate comparison website
+  - EUR rates: [https://www.klmoneychanger.com/compare-rates?n=EUR](https://www.klmoneychanger.com/compare-rates?n=EUR)
+  - GBP rates: [https://www.klmoneychanger.com/compare-rates?n=GBP](https://www.klmoneychanger.com/compare-rates?n=GBP)
+
+- **CashChanger** - Money changer aggregator
+  - GBP to MYR: [https://cashchanger.co/malaysia/gbp-to-myr?val=1&valtype=want&sort=sort-bestrate](https://cashchanger.co/malaysia/gbp-to-myr?val=1&valtype=want&sort=sort-bestrate)
+  - EUR to MYR: [https://cashchanger.co/malaysia/eur-to-myr?val=1&valtype=want&sort=sort-bestrate](https://cashchanger.co/malaysia/eur-to-myr?val=1&valtype=want&sort=sort-bestrate)
+
+These sources will provide additional rate comparison data and help ensure you're getting the best exchange rates available in KL.
+
 ## License
 
 This project is provided as-is for personal use.
