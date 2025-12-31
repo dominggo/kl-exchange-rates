@@ -53,6 +53,10 @@ BUKIT_BINTANG_URL = "https://www.jalinanduta.com/bukit-bintang/"
 MASJID_INDIA_URL = "https://www.jalinanduta.com/masjid-india/"
 MYMONEYMASTER_URL = "http://www.mymoneymaster.com.my/Home/full_rate_board"
 
+# Card Network Exchange Rate URLs (ferates.com)
+VISA_RATES_URL = "https://ferates.com/visa/myr"
+MASTERCARD_RATES_URL = "https://ferates.com/mastercard/myr"
+
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = config.get('telegram', {}).get('bot_token')
 TELEGRAM_CHAT_ID = config.get('telegram', {}).get('chat_id')
@@ -139,6 +143,52 @@ class ExchangeRateScraper:
 
         except Exception as e:
             logger.error(f"Error fetching Google Finance rates: {e}")
+            return None, None
+
+    def fetch_card_rates(self, card_network: str) -> tuple[Optional[Dict[str, Dict[str, float]]], Optional[datetime]]:
+        """
+        Fetch exchange rates from card networks (Visa/Mastercard) via ferates.com
+
+        Args:
+            card_network: Either 'Visa' or 'Mastercard'
+
+        Returns:
+            Tuple of (rates_dict, timestamp)
+            rates_dict: Dictionary with currency codes as keys and {'we_sell': rate, 'we_buy': rate} as values
+            timestamp: Current datetime
+        """
+        rates = {}
+
+        try:
+            # Select URL based on card network
+            if card_network.lower() == 'visa':
+                url = VISA_RATES_URL
+            elif card_network.lower() == 'mastercard':
+                url = MASTERCARD_RATES_URL
+            else:
+                logger.error(f"Unknown card network: {card_network}")
+                return None, None
+
+            logger.info(f"Fetching {card_network} rates from {url}")
+
+            # Fetch HTML content
+            html_content = self._fetch_html_requests(url, f"{card_network} Rates")
+            if not html_content:
+                logger.warning(f"Failed to fetch {card_network} rates")
+                return None, None
+
+            # Parse the rates
+            rates = self._parse_card_rates(html_content, card_network)
+
+            if rates:
+                logger.info(f"Successfully fetched {card_network} rates: {rates}")
+                return rates, datetime.now()
+            else:
+                logger.warning(f"No rates found from {card_network}")
+                return None, None
+
+        except Exception as e:
+            logger.error(f"Error fetching {card_network} rates: {e}")
             return None, None
 
     def fetch_rates(self, url: str, location: str) -> tuple[Optional[Dict[str, Dict[str, float]]], Optional[datetime]]:
@@ -547,6 +597,95 @@ class ExchangeRateScraper:
             logger.error(f"Error parsing Google Finance rate for {currency}: {e}")
             return None
 
+    def _parse_card_rates(self, html_content: str, card_network: str) -> Dict[str, Dict[str, float]]:
+        """
+        Parse exchange rates from ferates.com for card networks
+
+        Args:
+            html_content: HTML content from ferates.com
+            card_network: Either 'Visa' or 'Mastercard'
+
+        Returns:
+            Dictionary with currency codes as keys and {'we_sell': rate, 'we_buy': rate} as values
+        """
+        rates = {}
+
+        try:
+            from bs4 import BeautifulSoup
+            import re
+
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            # ferates.com shows rates in a table format
+            # We need to find rows for GBP, EUR, TRY, and IDR
+            # The format is typically: "Currency Name (CODE)" | Rate to MYR
+
+            # Find all table rows
+            rows = soup.find_all('tr')
+
+            for row in rows:
+                cols = row.find_all(['td', 'th'])
+                if len(cols) < 2:
+                    continue
+
+                # Extract currency code from first column
+                currency_text = cols[0].get_text(strip=True).upper()
+                currency = None
+
+                # Check for supported currencies
+                if 'GBP' in currency_text or 'POUND' in currency_text or 'STERLING' in currency_text or 'BRITAIN' in currency_text:
+                    currency = 'GBP'
+                elif 'EUR' in currency_text or 'EURO' in currency_text:
+                    currency = 'EUR'
+                elif 'IDR' in currency_text or 'RUPIAH' in currency_text or 'INDONESIA' in currency_text:
+                    currency = 'IDR'
+                elif 'TRY' in currency_text or 'LIRA' in currency_text or 'TURKISH' in currency_text or 'TURKEY' in currency_text or 'TUR' in currency_text:
+                    currency = 'TRY'
+
+                if not currency:
+                    continue
+
+                # Extract rate from second column
+                rate_text = cols[1].get_text(strip=True)
+                rate = self._extract_number(rate_text)
+
+                if rate:
+                    # Standardize rates
+                    # ferates.com typically shows rate per 1 unit of foreign currency to MYR
+                    # For MYR to foreign currency, we need to invert: 1/rate
+                    # This gives us how many foreign currency units per 1 MYR
+
+                    # However, since the page is for "visa/myr" or "mastercard/myr"
+                    # it should show MYR to other currencies
+                    # We need to verify the format by checking the actual data
+
+                    # For now, let's assume it shows foreign currency to MYR (like "1 GBP = X MYR")
+                    # We want MYR to foreign currency, so we invert
+                    myr_to_foreign = 1.0 / rate if rate > 0 else 0
+
+                    # Apply standardization for IDR and TRY
+                    if currency == 'IDR':
+                        # Convert to per 1,000,000 IDR
+                        myr_to_foreign = myr_to_foreign * 1000000
+                        logger.info(f"Standardized {card_network} IDR rate to per 1,000,000: {myr_to_foreign}")
+                    elif currency == 'TRY':
+                        # Convert to per 100 TRY
+                        myr_to_foreign = myr_to_foreign * 100
+                        logger.info(f"Standardized {card_network} TRY rate to per 100: {myr_to_foreign}")
+
+                    # Card networks use the same rate for buy and sell (they apply their own markup)
+                    rates[currency] = {
+                        'we_sell': rate,  # Use the original rate (foreign to MYR)
+                        'we_buy': rate
+                    }
+                    logger.info(f"Found {card_network} {currency} rate: {rate}")
+
+            return rates
+
+        except Exception as e:
+            logger.error(f"Error parsing {card_network} rates: {e}", exc_info=True)
+            return {}
+
     def _extract_number(self, text: str) -> Optional[float]:
         """Extract a floating point number from text"""
         import re
@@ -721,27 +860,62 @@ def format_rate_message(all_rates: Dict[str, Dict[str, Dict[str, float]]]) -> st
     message = f"<b>💱 Exchange Rates We Sell Rate</b>\n"
     message += f"📅 {timestamp}\n\n"
 
+    # Define the order: Google Finance, then Mastercard, Visa, then other locations
+    priority_order = ["Google Finance", "Mastercard", "Visa"]
+
+    # First, display priority locations (Google Finance, Mastercard, Visa)
+    for location in priority_order:
+        if location in all_rates:
+            rates = all_rates[location]
+
+            # Use card emoji for card networks
+            if location == "Mastercard":
+                message += f"<b>💳 {location}</b>\n"
+            elif location == "Visa":
+                message += f"<b>💳 {location}</b>\n"
+            else:
+                message += f"<b>📍 {location}</b>\n"
+
+            if 'GBP' in rates:
+                message += f"  🇬🇧 MYR → 1 GBP : <b>RM {rates['GBP']['we_sell']:.4f}</b>\n"
+
+            if 'EUR' in rates:
+                message += f"  🇪🇺 MYR → 1 EUR : <b>RM {rates['EUR']['we_sell']:.4f}</b>\n"
+
+            if 'IDR' in rates:
+                message += f"  🇮🇩 MYR → 1mil IDR : <b>RM {rates['IDR']['we_sell']:.4f}</b>\n"
+
+            if 'TRY' in rates:
+                message += f"  🇹🇷 MYR → 100 TRY : <b>RM {rates['TRY']['we_sell']:.4f}</b>\n"
+
+            if not rates:
+                message += "  ⚠️ No rates available\n"
+
+            message += "\n"
+
+    # Then display other locations (money changers)
     for location, rates in all_rates.items():
-        message += f"<b>📍 {location}</b>\n"
+        if location not in priority_order:
+            message += f"<b>📍 {location}</b>\n"
 
-        if 'GBP' in rates:
-            message += f"  🇬🇧 MYR → 1 GBP : <b>RM {rates['GBP']['we_sell']:.4f}</b>\n"
+            if 'GBP' in rates:
+                message += f"  🇬🇧 MYR → 1 GBP : <b>RM {rates['GBP']['we_sell']:.4f}</b>\n"
 
-        if 'EUR' in rates:
-            message += f"  🇪🇺 MYR → 1 EUR : <b>RM {rates['EUR']['we_sell']:.4f}</b>\n"
+            if 'EUR' in rates:
+                message += f"  🇪🇺 MYR → 1 EUR : <b>RM {rates['EUR']['we_sell']:.4f}</b>\n"
 
-        if 'IDR' in rates:
-            message += f"  🇮🇩 MYR → 1mil IDR : <b>RM {rates['IDR']['we_sell']:.4f}</b>\n"
+            if 'IDR' in rates:
+                message += f"  🇮🇩 MYR → 1mil IDR : <b>RM {rates['IDR']['we_sell']:.4f}</b>\n"
 
-        if 'TRY' in rates:
-            message += f"  🇹🇷 MYR → 100 TRY : <b>RM {rates['TRY']['we_sell']:.4f}</b>\n"
+            if 'TRY' in rates:
+                message += f"  🇹🇷 MYR → 100 TRY : <b>RM {rates['TRY']['we_sell']:.4f}</b>\n"
 
-        if not rates:
-            message += "  ⚠️ No rates available\n"
+            if not rates:
+                message += "  ⚠️ No rates available\n"
 
-        message += "\n"
+            message += "\n"
 
-    message += "<i>We Sell rates from Google Finance, JalinanDuta and MyMoneyMaster</i>\n"
+    message += "<i>We Sell rates from Google Finance, Mastercard, Visa, JalinanDuta and MyMoneyMaster</i>\n"
     message += "<i>(Rate for buying foreign currency with MYR)</i>"
 
     return message
@@ -777,6 +951,24 @@ def main():
         else:
             all_rates["Google Finance"] = {}
             logger.warning("No rates fetched from Google Finance")
+
+        # Fetch Mastercard rates
+        mastercard_rates, mastercard_timestamp = scraper.fetch_card_rates("Mastercard")
+        if mastercard_rates:
+            all_rates["Mastercard"] = mastercard_rates
+            db_manager.save_rates("Mastercard", mastercard_rates, mastercard_timestamp)
+        else:
+            all_rates["Mastercard"] = {}
+            logger.warning("No rates fetched from Mastercard")
+
+        # Fetch Visa rates
+        visa_rates, visa_timestamp = scraper.fetch_card_rates("Visa")
+        if visa_rates:
+            all_rates["Visa"] = visa_rates
+            db_manager.save_rates("Visa", visa_rates, visa_timestamp)
+        else:
+            all_rates["Visa"] = {}
+            logger.warning("No rates fetched from Visa")
 
         # Fetch rates from all other locations
         locations = [
