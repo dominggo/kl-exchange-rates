@@ -4,10 +4,11 @@ A Python bot that monitors GBP and EUR to MYR exchange rates from multiple Malay
 
 ## Features
 
-- 📊 Scrapes both "We Sell" and "We Buy" rates for GBP→MYR and EUR→MYR
+- 📊 Scrapes both "We Sell" and "We Buy" rates for GBP→MYR, EUR→MYR, IDR→MYR, and TRY→MYR
 - 📍 Monitors rates from multiple sources:
-  - **Jalin & Duta** - Bukit Bintang location ([https://www.jalinanduta.com/bukit-bintang/](https://www.jalinanduta.com/bukit-bintang/))
-  - **Jalin & Duta** - Masjid India location ([https://www.jalinanduta.com/masjid-india/](https://www.jalinanduta.com/masjid-india/))
+  - **Google Finance** - Real-time market rates ([GBP-MYR](https://www.google.com/finance/quote/GBP-MYR) | [EUR-MYR](https://www.google.com/finance/quote/EUR-MYR) | [IDR-MYR](https://www.google.com/finance/quote/IDR-MYR) | [TRY-MYR](https://www.google.com/finance/quote/TRY-MYR))
+  - **JalinanDuta** - Bukit Bintang location ([https://www.jalinanduta.com/bukit-bintang/](https://www.jalinanduta.com/bukit-bintang/))
+  - **JalinanDuta** - Masjid India location ([https://www.jalinanduta.com/masjid-india/](https://www.jalinanduta.com/masjid-india/))
   - **MyMoneyMaster** - Online aggregator ([http://www.mymoneymaster.com.my/Home/full_rate_board](http://www.mymoneymaster.com.my/Home/full_rate_board))
 - 📱 Sends formatted "We Sell" rate updates to Telegram
 - 💾 Stores both rates in MySQL database with timestamps for historical tracking
@@ -384,8 +385,14 @@ locations = [
 
 The bot uses different strategies for different sources:
 
-**Jalin & Duta (Bukit Bintang, Masjid India):**
-- Looking for currency code (GBP, EUR) in table columns
+**Google Finance:**
+- Fetches separate pages for GBP-MYR, EUR-MYR, IDR-MYR, and TRY-MYR
+- Extracts rate from HTML using class `YMlKec fxKbKc`
+- Uses the same rate for both We Buy and We Sell (market rate)
+- Real-time market exchange rates
+
+**JalinanDuta (Bukit Bintang, Masjid India):**
+- Looking for currency code (GBP, EUR, IDR, TRY) in table columns
 - Finding cells with CSS class `table-green-color` (We Sell) and `table-red-color` (We Buy)
 - Fallback to column indices if CSS classes are not found
 
@@ -397,7 +404,8 @@ The bot uses different strategies for different sources:
 
 ### Timestamp Handling
 
-- **Jalin & Duta**: Uses current system time when rates are fetched
+- **Google Finance**: Uses current system time when rates are fetched
+- **JalinanDuta**: Uses current system time when rates are fetched
 - **MyMoneyMaster**: Extracts and uses the "Last Updated" timestamp from the website (shows when rates were last updated by the money changer)
 
 ## Support

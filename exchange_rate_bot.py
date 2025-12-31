@@ -45,6 +45,10 @@ def load_config():
 config = load_config()
 
 # URLs Configuration
+GOOGLE_FINANCE_GBP_URL = "https://www.google.com/finance/quote/GBP-MYR"
+GOOGLE_FINANCE_EUR_URL = "https://www.google.com/finance/quote/EUR-MYR"
+GOOGLE_FINANCE_IDR_URL = "https://www.google.com/finance/quote/IDR-MYR"
+GOOGLE_FINANCE_TRY_URL = "https://www.google.com/finance/quote/TRY-MYR"
 BUKIT_BINTANG_URL = "https://www.jalinanduta.com/bukit-bintang/"
 MASJID_INDIA_URL = "https://www.jalinanduta.com/masjid-india/"
 MYMONEYMASTER_URL = "http://www.mymoneymaster.com.my/Home/full_rate_board"
@@ -82,6 +86,60 @@ class ExchangeRateScraper:
             'Cache-Control': 'max-age=0'
         })
         self.use_selenium = False
+
+    def fetch_google_finance_rates(self) -> tuple[Optional[Dict[str, Dict[str, float]]], Optional[datetime]]:
+        """
+        Fetch exchange rates from Google Finance for GBP, EUR, IDR, and TRY
+
+        Returns:
+            Tuple of (rates_dict, timestamp)
+            rates_dict: Dictionary with currency codes as keys and {'we_sell': rate, 'we_buy': rate} as values
+            timestamp: Current datetime (Google Finance doesn't provide last update time)
+        """
+        rates = {}
+
+        try:
+            # Define currencies to fetch
+            currencies = [
+                ('GBP', GOOGLE_FINANCE_GBP_URL),
+                ('EUR', GOOGLE_FINANCE_EUR_URL),
+                ('IDR', GOOGLE_FINANCE_IDR_URL),
+                ('TRY', GOOGLE_FINANCE_TRY_URL)
+            ]
+
+            # Fetch each currency
+            for currency_code, url in currencies:
+                html_content = self._fetch_html_requests(url, f"Google Finance {currency_code}")
+                if html_content:
+                    rate = self._parse_google_finance(html_content, currency_code)
+                    if rate:
+                        # Google Finance shows the exchange rate, which is what we "sell" MYR for
+                        # Standardize rates to match other sources
+                        if currency_code == 'IDR':
+                            # Google shows per 1 IDR, we want per 1,000,000 IDR
+                            rate = rate * 1000000
+                            logger.info(f"Standardized Google Finance IDR rate to per 1,000,000: {rate}")
+                        elif currency_code == 'TRY':
+                            # Google shows per 1 TRY, we want per 100 TRY
+                            rate = rate * 100
+                            logger.info(f"Standardized Google Finance TRY rate to per 100: {rate}")
+
+                        # For consistency with other sources, we'll use the same rate for both buy and sell
+                        rates[currency_code] = {
+                            'we_sell': rate,
+                            'we_buy': rate
+                        }
+
+            if rates:
+                logger.info(f"Successfully fetched Google Finance rates: {rates}")
+                return rates, datetime.now()
+            else:
+                logger.warning("No rates found from Google Finance")
+                return None, None
+
+        except Exception as e:
+            logger.error(f"Error fetching Google Finance rates: {e}")
+            return None, None
 
     def fetch_rates(self, url: str, location: str) -> tuple[Optional[Dict[str, Dict[str, float]]], Optional[datetime]]:
         """
@@ -233,12 +291,18 @@ class ExchangeRateScraper:
                             continue
                         currency_cell = cols[check_col_idx].get_text(strip=True).upper()
 
-                        # Check if this is GBP or EUR
+                        # Check for supported currencies
                         if 'GBP' in currency_cell or 'POUND' in currency_cell or 'STERLING' in currency_cell or 'BRITAIN' in currency_cell:
                             currency = 'GBP'
                             break
                         elif 'EUR' in currency_cell or 'EURO' in currency_cell:
                             currency = 'EUR'
+                            break
+                        elif 'IDR' in currency_cell or 'RUPIAH' in currency_cell or 'INDONESIA' in currency_cell:
+                            currency = 'IDR'
+                            break
+                        elif 'TRY' in currency_cell or 'LIRA' in currency_cell or 'TURKISH' in currency_cell or 'TURKEY' in currency_cell:
+                            currency = 'TRY'
                             break
 
                     if not currency:
@@ -373,11 +437,15 @@ class ExchangeRateScraper:
                 currency_text = cols[0].get_text(strip=True).upper()
                 currency = None
 
-                # Check if this is GBP or EUR
+                # Check for supported currencies
                 if 'GBP' in currency_text or 'POUND' in currency_text or 'STERLING' in currency_text:
                     currency = 'GBP'
                 elif 'EUR' in currency_text or 'EURO' in currency_text:
                     currency = 'EUR'
+                elif 'IDR' in currency_text or 'RUPIAH' in currency_text or 'INDONESIA' in currency_text:
+                    currency = 'IDR'
+                elif 'TRY' in currency_text or 'TUR' in currency_text or 'LIRA' in currency_text or 'TURKISH' in currency_text or 'TURKEY' in currency_text:
+                    currency = 'TRY'
 
                 if not currency:
                     continue
@@ -385,6 +453,12 @@ class ExchangeRateScraper:
                 # Extract We Buy rate (column 1) and We Sell rate (column 2)
                 we_buy_rate = self._extract_number(cols[1].get_text(strip=True))
                 we_sell_rate = self._extract_number(cols[2].get_text(strip=True))
+
+                # Standardize TRY rates (MyMoneyMaster shows per 1 TRY, we want per 100 TRY)
+                if currency == 'TRY' and we_buy_rate and we_sell_rate:
+                    we_buy_rate = we_buy_rate * 100
+                    we_sell_rate = we_sell_rate * 100
+                    logger.info(f"Standardized MyMoneyMaster TRY rates to per 100: We Sell={we_sell_rate}, We Buy={we_buy_rate}")
 
                 # Extract timestamp from column 3 (e.g., "at 03:07 PM")
                 if len(cols) >= 4 and not rate_timestamp:
@@ -445,6 +519,34 @@ class ExchangeRateScraper:
             logger.error(f"Error parsing timestamp '{timestamp_text}': {e}")
             return None
 
+    def _parse_google_finance(self, html_content: str, currency: str) -> Optional[float]:
+        """
+        Parse exchange rate from Google Finance
+
+        Args:
+            html_content: HTML content from Google Finance page
+            currency: Currency code (GBP or EUR)
+
+        Returns:
+            Exchange rate as float, or None if not found
+        """
+        try:
+            import re
+
+            # Google Finance uses class "YMlKec fxKbKc" for the rate value
+            match = re.search(r'"YMlKec fxKbKc">([0-9.]+)', html_content)
+            if match:
+                rate = float(match.group(1))
+                logger.info(f"Found Google Finance {currency} rate: {rate}")
+                return rate
+
+            logger.warning(f"Could not find Google Finance rate for {currency}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error parsing Google Finance rate for {currency}: {e}")
+            return None
+
     def _extract_number(self, text: str) -> Optional[float]:
         """Extract a floating point number from text"""
         import re
@@ -453,7 +555,7 @@ class ExchangeRateScraper:
         for match in matches:
             try:
                 num = float(match)
-                if num > 1:  # Reasonable exchange rate
+                if num > 0:  # Any positive number is valid
                     return num
             except ValueError:
                 continue
@@ -623,17 +725,23 @@ def format_rate_message(all_rates: Dict[str, Dict[str, Dict[str, float]]]) -> st
         message += f"<b>📍 {location}</b>\n"
 
         if 'GBP' in rates:
-            message += f"  🇬🇧 GBP → MYR: <b>RM {rates['GBP']['we_sell']:.4f}</b>\n"
+            message += f"  🇬🇧 MYR → 1 GBP : <b>RM {rates['GBP']['we_sell']:.4f}</b>\n"
 
         if 'EUR' in rates:
-            message += f"  🇪🇺 EUR → MYR: <b>RM {rates['EUR']['we_sell']:.4f}</b>\n"
+            message += f"  🇪🇺 MYR → 1 EUR : <b>RM {rates['EUR']['we_sell']:.4f}</b>\n"
+
+        if 'IDR' in rates:
+            message += f"  🇮🇩 MYR → 1mil IDR : <b>RM {rates['IDR']['we_sell']:.4f}</b>\n"
+
+        if 'TRY' in rates:
+            message += f"  🇹🇷 MYR → 100 TRY : <b>RM {rates['TRY']['we_sell']:.4f}</b>\n"
 
         if not rates:
             message += "  ⚠️ No rates available\n"
 
         message += "\n"
 
-    message += "<i>We Sell rates from JalinanDuta and MyMoneyMaster</i>\n"
+    message += "<i>We Sell rates from Google Finance, JalinanDuta and MyMoneyMaster</i>\n"
     message += "<i>(Rate for buying foreign currency with MYR)</i>"
 
     return message
@@ -661,7 +769,16 @@ def main():
         # Connect to database
         db_manager.connect()
 
-        # Fetch rates from all locations
+        # Fetch Google Finance rates first
+        google_rates, google_timestamp = scraper.fetch_google_finance_rates()
+        if google_rates:
+            all_rates["Google Finance"] = google_rates
+            db_manager.save_rates("Google Finance", google_rates, google_timestamp)
+        else:
+            all_rates["Google Finance"] = {}
+            logger.warning("No rates fetched from Google Finance")
+
+        # Fetch rates from all other locations
         locations = [
             (BUKIT_BINTANG_URL, "JalinanDuta(Bukit Bintang)"),
             (MASJID_INDIA_URL, "JalinanDuta(Masjid India)"),
