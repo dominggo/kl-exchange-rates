@@ -82,7 +82,7 @@ class ExchangeRateScraper:
         })
         self.use_selenium = False
 
-    def fetch_rates(self, url: str, location: str) -> Optional[Dict[str, float]]:
+    def fetch_rates(self, url: str, location: str) -> Optional[Dict[str, Dict[str, float]]]:
         """
         Fetch exchange rates from the given URL
 
@@ -188,10 +188,13 @@ class ExchangeRateScraper:
             logger.error(f"Selenium error for {location}: {e}")
             return None
 
-    def _parse_rates(self, soup: BeautifulSoup) -> Dict[str, float]:
+    def _parse_rates(self, soup: BeautifulSoup) -> Dict[str, Dict[str, float]]:
         """
         Parse exchange rates from the HTML
-        Tries multiple methods to extract GBP and EUR "We Sell" rates
+        Extracts both "We Sell" (green) and "We Buy" (red) rates for GBP and EUR
+
+        Returns:
+            Dictionary with currency codes as keys and dict of {'we_sell': rate, 'we_buy': rate} as values
         """
         rates = {}
 
@@ -205,52 +208,67 @@ class ExchangeRateScraper:
             for table_idx, table in enumerate(tables):
                 rows = table.find_all('tr')
 
-                # First, identify which column is "We Sell"
-                header_row = rows[0] if rows else None
-                we_sell_col_idx = None
-
-                if header_row:
-                    headers = header_row.find_all(['th', 'td'])
-                    for idx, header in enumerate(headers):
-                        header_text = header.get_text(strip=True).upper()
-                        if 'WE SELL' in header_text or 'SELL' in header_text:
-                            we_sell_col_idx = idx
-                            logger.debug(f"Found 'We Sell' column at index {idx}")
-                            break
-
-                # Parse data rows
-                for row in rows[1:]:  # Skip header
+                # Parse data rows - look for GBP and EUR
+                for row in rows:
                     cols = row.find_all(['td', 'th'])
-                    if len(cols) < 2:
+                    if len(cols) < 4:  # Need at least 4 columns
                         continue
 
-                    # Look for currency code in first column
-                    currency_cell = cols[0].get_text(strip=True).upper()
+                    # Look for currency code - check both first and second columns
                     currency = None
+                    for check_col_idx in [0, 1]:
+                        if check_col_idx >= len(cols):
+                            continue
+                        currency_cell = cols[check_col_idx].get_text(strip=True).upper()
 
-                    # Check if this is GBP or EUR
-                    if 'GBP' in currency_cell or 'POUND' in currency_cell or 'STERLING' in currency_cell or 'BRITAIN' in currency_cell:
-                        currency = 'GBP'
-                    elif 'EUR' in currency_cell or 'EURO' in currency_cell:
-                        currency = 'EUR'
+                        # Check if this is GBP or EUR
+                        if 'GBP' in currency_cell or 'POUND' in currency_cell or 'STERLING' in currency_cell or 'BRITAIN' in currency_cell:
+                            currency = 'GBP'
+                            break
+                        elif 'EUR' in currency_cell or 'EURO' in currency_cell:
+                            currency = 'EUR'
+                            break
 
                     if not currency:
                         continue
 
-                    # Extract rate from "We Sell" column or try all columns
-                    if we_sell_col_idx and we_sell_col_idx < len(cols):
-                        rate = self._extract_number(cols[we_sell_col_idx].get_text(strip=True))
-                        if rate:
-                            rates[currency] = rate
-                            logger.info(f"Found {currency} rate: {rate} (from We Sell column)")
-                    else:
-                        # Try all columns if We Sell column not identified
-                        for col_idx, col in enumerate(cols[1:], 1):
-                            rate = self._extract_number(col.get_text(strip=True))
-                            if rate and 2.0 < rate < 10.0:  # Reasonable MYR exchange rate range
-                                rates[currency] = rate
-                                logger.info(f"Found {currency} rate: {rate} (from column {col_idx})")
-                                break
+                    # Look for both "We Sell" and "We Buy" rates
+                    # Structure: [Flag, Currency Code, Currency Name, Unit, We Sell (green), We Buy (red)]
+                    we_sell_rate = None
+                    we_buy_rate = None
+
+                    # Try to find cells with table-green-color (We Sell) and table-red-color (We Buy)
+                    for col in cols:
+                        col_classes = col.get('class')
+                        if col_classes:
+                            if 'table-green-color' in col_classes:
+                                rate = self._extract_number(col.get_text(strip=True))
+                                if rate:
+                                    we_sell_rate = rate
+                                    logger.debug(f"Found {currency} We Sell rate: {rate} (from table-green-color)")
+                            elif 'table-red-color' in col_classes:
+                                rate = self._extract_number(col.get_text(strip=True))
+                                if rate:
+                                    we_buy_rate = rate
+                                    logger.debug(f"Found {currency} We Buy rate: {rate} (from table-red-color)")
+
+                    # If we found both rates with CSS classes, use them
+                    if we_sell_rate and we_buy_rate:
+                        rates[currency] = {
+                            'we_sell': we_sell_rate,
+                            'we_buy': we_buy_rate
+                        }
+                        logger.info(f"Found {currency} rates: We Sell={we_sell_rate}, We Buy={we_buy_rate}")
+                    # Fallback: if classes not found, try column indices (4=We Sell, 5=We Buy)
+                    elif len(cols) >= 6:
+                        we_sell_rate = self._extract_number(cols[4].get_text(strip=True))
+                        we_buy_rate = self._extract_number(cols[5].get_text(strip=True))
+                        if we_sell_rate and we_buy_rate and 2.0 < we_sell_rate < 10.0 and 2.0 < we_buy_rate < 10.0:
+                            rates[currency] = {
+                                'we_sell': we_sell_rate,
+                                'we_buy': we_buy_rate
+                            }
+                            logger.info(f"Found {currency} rates (fallback): We Sell={we_sell_rate}, We Buy={we_buy_rate}")
 
             # Method 2: Look for WordPress/custom layouts with classes
             if not rates:
@@ -358,13 +376,13 @@ class DatabaseManager:
             self.connection.close()
             logger.info("Database connection closed")
 
-    def save_rates(self, location: str, rates: Dict[str, float]):
+    def save_rates(self, location: str, rates: Dict[str, Dict[str, float]]):
         """
         Save exchange rates to database
 
         Args:
             location: Location name (e.g., 'Bukit Bintang')
-            rates: Dictionary of currency codes and rates
+            rates: Dictionary with currency codes as keys and {'we_sell': rate, 'we_buy': rate} as values
         """
         if not self.connection or not self.connection.is_connected():
             self.connect()
@@ -373,16 +391,22 @@ class DatabaseManager:
         timestamp = datetime.now()
 
         try:
-            for currency, rate in rates.items():
+            for currency, rate_data in rates.items():
                 query = """
                     INSERT INTO exchange_rates
-                    (location, currency, rate, timestamp)
-                    VALUES (%s, %s, %s, %s)
+                    (location, currency, we_sell_rate, we_buy_rate, timestamp)
+                    VALUES (%s, %s, %s, %s, %s)
                 """
-                cursor.execute(query, (location, currency, rate, timestamp))
+                cursor.execute(query, (
+                    location,
+                    currency,
+                    rate_data['we_sell'],
+                    rate_data['we_buy'],
+                    timestamp
+                ))
 
             self.connection.commit()
-            logger.info(f"Saved {len(rates)} rates for {location} to database")
+            logger.info(f"Saved {len(rates)} currency rates (both buy and sell) for {location} to database")
 
         except mysql.connector.Error as e:
             logger.error(f"Error saving rates to database: {e}")
@@ -457,12 +481,14 @@ class TelegramNotifier:
             return False
 
 
-def format_rate_message(all_rates: Dict[str, Dict[str, float]]) -> str:
+def format_rate_message(all_rates: Dict[str, Dict[str, Dict[str, float]]]) -> str:
     """
     Format exchange rates into a Telegram message
+    Displays only "We Sell" rates (the rate for buying foreign currency)
 
     Args:
         all_rates: Dictionary with location as key and rates dict as value
+                  Each rate dict has currency code as key and {'we_sell': rate, 'we_buy': rate} as value
 
     Returns:
         Formatted message string
@@ -476,17 +502,18 @@ def format_rate_message(all_rates: Dict[str, Dict[str, float]]) -> str:
         message += f"<b>📍 {location}</b>\n"
 
         if 'GBP' in rates:
-            message += f"  🇬🇧 GBP → MYR: <b>RM {rates['GBP']:.4f}</b>\n"
+            message += f"  🇬🇧 GBP → MYR: <b>RM {rates['GBP']['we_sell']:.4f}</b>\n"
 
         if 'EUR' in rates:
-            message += f"  🇪🇺 EUR → MYR: <b>RM {rates['EUR']:.4f}</b>\n"
+            message += f"  🇪🇺 EUR → MYR: <b>RM {rates['EUR']['we_sell']:.4f}</b>\n"
 
         if not rates:
             message += "  ⚠️ No rates available\n"
 
         message += "\n"
 
-    message += "<i>We Sell rates from Jalin &amp; Duta Money Changers</i>"
+    message += "<i>We Sell rates from Jalin &amp; Duta Money Changers</i>\n"
+    message += "<i>(Rate for buying foreign currency with MYR)</i>"
 
     return message
 

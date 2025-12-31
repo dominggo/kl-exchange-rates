@@ -101,7 +101,8 @@ def create_tables():
             id INT AUTO_INCREMENT PRIMARY KEY,
             location VARCHAR(100) NOT NULL,
             currency VARCHAR(10) NOT NULL,
-            rate DECIMAL(10, 4) NOT NULL,
+            we_sell_rate DECIMAL(10, 4) NOT NULL COMMENT 'Rate at which money changer sells to customer (green column)',
+            we_buy_rate DECIMAL(10, 4) NOT NULL COMMENT 'Rate at which money changer buys from customer (red column)',
             timestamp DATETIME NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_location (location),
@@ -109,7 +110,7 @@ def create_tables():
             INDEX idx_timestamp (timestamp),
             INDEX idx_location_currency_timestamp (location, currency, timestamp)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        COMMENT='Exchange rates from Jalin & Duta money changers'
+        COMMENT='Exchange rates from Jalin & Duta money changers - both buy and sell rates'
         """
 
         cursor.execute(create_table_query)
@@ -121,7 +122,8 @@ def create_tables():
         SELECT
             location,
             currency,
-            rate,
+            we_sell_rate,
+            we_buy_rate,
             timestamp
         FROM exchange_rates e1
         WHERE timestamp = (
