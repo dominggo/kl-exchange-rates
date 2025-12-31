@@ -47,6 +47,7 @@ config = load_config()
 # URLs Configuration
 BUKIT_BINTANG_URL = "https://www.jalinanduta.com/bukit-bintang/"
 MASJID_INDIA_URL = "https://www.jalinanduta.com/masjid-india/"
+MYMONEYMASTER_URL = "http://www.mymoneymaster.com.my/Home/full_rate_board"
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = config.get('telegram', {}).get('bot_token')
@@ -82,7 +83,7 @@ class ExchangeRateScraper:
         })
         self.use_selenium = False
 
-    def fetch_rates(self, url: str, location: str) -> Optional[Dict[str, Dict[str, float]]]:
+    def fetch_rates(self, url: str, location: str) -> tuple[Optional[Dict[str, Dict[str, float]]], Optional[datetime]]:
         """
         Fetch exchange rates from the given URL
 
@@ -91,7 +92,9 @@ class ExchangeRateScraper:
             location: Location name (e.g., 'Bukit Bintang')
 
         Returns:
-            Dictionary with currency codes as keys and rates as values
+            Tuple of (rates_dict, timestamp)
+            rates_dict: Dictionary with currency codes as keys and rates as values
+            timestamp: datetime when rates were last updated (None for Jalin & Duta, uses current time)
         """
         # Try requests first, fall back to Selenium if needed
         html_content = self._fetch_html_requests(url, location)
@@ -102,11 +105,11 @@ class ExchangeRateScraper:
 
         if not html_content:
             logger.error(f"All fetch methods failed for {location}")
-            return None
+            return None, None
 
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
-            rates = self._parse_rates(soup)
+            rates, rate_timestamp = self._parse_rates(soup)
 
             if rates:
                 logger.info(f"Successfully fetched rates from {location}: {rates}")
@@ -118,11 +121,11 @@ class ExchangeRateScraper:
                     f.write(html_content)
                 logger.info(f"Saved HTML to {debug_file} for inspection")
 
-            return rates
+            return rates, rate_timestamp
 
         except Exception as e:
             logger.error(f"Unexpected error parsing rates from {location}: {e}")
-            return None
+            return None, None
 
     def _fetch_html_requests(self, url: str, location: str) -> Optional[str]:
         """Fetch HTML using requests library"""
@@ -188,20 +191,29 @@ class ExchangeRateScraper:
             logger.error(f"Selenium error for {location}: {e}")
             return None
 
-    def _parse_rates(self, soup: BeautifulSoup) -> Dict[str, Dict[str, float]]:
+    def _parse_rates(self, soup: BeautifulSoup) -> tuple[Dict[str, Dict[str, float]], Optional[datetime]]:
         """
         Parse exchange rates from the HTML
         Extracts both "We Sell" (green) and "We Buy" (red) rates for GBP and EUR
 
         Returns:
-            Dictionary with currency codes as keys and dict of {'we_sell': rate, 'we_buy': rate} as values
+            Tuple of (rates_dict, timestamp)
+            rates_dict: Dictionary with currency codes as keys and dict of {'we_sell': rate, 'we_buy': rate} as values
+            timestamp: datetime for MyMoneyMaster, None for Jalin & Duta (will use current time)
         """
         rates = {}
 
         try:
             logger.debug("Starting rate parsing...")
 
-            # Method 1: Look for tables with exchange rates
+            # Check if this is MyMoneyMaster website (different structure)
+            if soup.find('tr', class_='filtersearch'):
+                logger.debug("Detected MyMoneyMaster website structure")
+                rates, rate_timestamp = self._parse_mymoneymaster(soup)
+                if rates:
+                    return rates, rate_timestamp
+
+            # Method 1: Look for tables with exchange rates (Jalin & Duta)
             tables = soup.find_all('table')
             logger.debug(f"Found {len(tables)} tables")
 
@@ -321,11 +333,117 @@ class ExchangeRateScraper:
                             rates['EUR'] = rate
                             logger.info(f"Found EUR rate: {rate} (from text search)")
 
-            return rates
+            # Jalin & Duta don't have timestamps, return None
+            return rates, None
 
         except Exception as e:
             logger.error(f"Error parsing HTML structure: {e}", exc_info=True)
-            return {}
+            return {}, None
+
+    def _parse_mymoneymaster(self, soup: BeautifulSoup) -> tuple[Dict[str, Dict[str, float]], Optional[datetime]]:
+        """
+        Parse exchange rates from MyMoneyMaster website
+
+        MyMoneyMaster structure:
+        - Row with class "filtersearch" containing currency info
+        - td[0]: Currency name and code (e.g., "European Union Euro Dollar (EUR)")
+        - td[1]: We Buy rate (they buy from customer)
+        - td[2]: We Sell rate (they sell to customer)
+        - td[3]: Timestamp (e.g., "at 03:07 PM")
+
+        Returns:
+            Tuple of (rates_dict, timestamp)
+            rates_dict: Dictionary with currency codes as keys and dict of {'we_sell': rate, 'we_buy': rate} as values
+            timestamp: datetime object parsed from the "Last Updated" field
+        """
+        rates = {}
+        rate_timestamp = None
+
+        try:
+            # Find all currency rows
+            currency_rows = soup.find_all('tr', class_='filtersearch')
+            logger.debug(f"Found {len(currency_rows)} currency rows in MyMoneyMaster")
+
+            for row in currency_rows:
+                cols = row.find_all('td')
+                if len(cols) < 4:
+                    continue
+
+                # Extract currency code from first column
+                currency_text = cols[0].get_text(strip=True).upper()
+                currency = None
+
+                # Check if this is GBP or EUR
+                if 'GBP' in currency_text or 'POUND' in currency_text or 'STERLING' in currency_text:
+                    currency = 'GBP'
+                elif 'EUR' in currency_text or 'EURO' in currency_text:
+                    currency = 'EUR'
+
+                if not currency:
+                    continue
+
+                # Extract We Buy rate (column 1) and We Sell rate (column 2)
+                we_buy_rate = self._extract_number(cols[1].get_text(strip=True))
+                we_sell_rate = self._extract_number(cols[2].get_text(strip=True))
+
+                # Extract timestamp from column 3 (e.g., "at 03:07 PM")
+                if len(cols) >= 4 and not rate_timestamp:
+                    timestamp_text = cols[3].get_text(strip=True)
+                    rate_timestamp = self._parse_mymoneymaster_timestamp(timestamp_text)
+
+                if we_buy_rate and we_sell_rate:
+                    rates[currency] = {
+                        'we_sell': we_sell_rate,
+                        'we_buy': we_buy_rate
+                    }
+                    logger.info(f"Found {currency} rates: We Sell={we_sell_rate}, We Buy={we_buy_rate}")
+
+            if rate_timestamp:
+                logger.info(f"MyMoneyMaster rates last updated: {rate_timestamp}")
+
+            return rates, rate_timestamp
+
+        except Exception as e:
+            logger.error(f"Error parsing MyMoneyMaster rates: {e}", exc_info=True)
+            return {}, None
+
+    def _parse_mymoneymaster_timestamp(self, timestamp_text: str) -> Optional[datetime]:
+        """
+        Parse MyMoneyMaster timestamp format (e.g., "at 03:07 PM")
+
+        Returns:
+            datetime object with today's date and the parsed time
+        """
+        try:
+            import re
+            from datetime import datetime
+
+            # Extract time from text like "at 03:07 PM"
+            match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', timestamp_text, re.IGNORECASE)
+            if match:
+                hour = int(match.group(1))
+                minute = int(match.group(2))
+                ampm = match.group(3).upper()
+
+                # Convert to 24-hour format
+                if ampm == 'PM' and hour != 12:
+                    hour += 12
+                elif ampm == 'AM' and hour == 12:
+                    hour = 0
+
+                # Create datetime with today's date and extracted time
+                now = datetime.now()
+                parsed_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+                logger.debug(f"Parsed timestamp '{timestamp_text}' as {parsed_time}")
+                return parsed_time
+
+            logger.warning(f"Could not parse timestamp: {timestamp_text}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error parsing timestamp '{timestamp_text}': {e}")
+            return None
 
     def _extract_number(self, text: str) -> Optional[float]:
         """Extract a floating point number from text"""
@@ -376,19 +494,21 @@ class DatabaseManager:
             self.connection.close()
             logger.info("Database connection closed")
 
-    def save_rates(self, location: str, rates: Dict[str, Dict[str, float]]):
+    def save_rates(self, location: str, rates: Dict[str, Dict[str, float]], rate_timestamp: Optional[datetime] = None):
         """
         Save exchange rates to database
 
         Args:
             location: Location name (e.g., 'Bukit Bintang')
             rates: Dictionary with currency codes as keys and {'we_sell': rate, 'we_buy': rate} as values
+            rate_timestamp: Optional timestamp from source (MyMoneyMaster), uses current time if None
         """
         if not self.connection or not self.connection.is_connected():
             self.connect()
 
         cursor = self.connection.cursor()
-        timestamp = datetime.now()
+        # Use provided timestamp if available, otherwise use current time
+        timestamp = rate_timestamp if rate_timestamp is not None else datetime.now()
 
         try:
             for currency, rate_data in rates.items():
@@ -406,7 +526,8 @@ class DatabaseManager:
                 ))
 
             self.connection.commit()
-            logger.info(f"Saved {len(rates)} currency rates (both buy and sell) for {location} to database")
+            timestamp_source = "from source" if rate_timestamp else "current time"
+            logger.info(f"Saved {len(rates)} currency rates (both buy and sell) for {location} to database with timestamp {timestamp} ({timestamp_source})")
 
         except mysql.connector.Error as e:
             logger.error(f"Error saving rates to database: {e}")
@@ -495,7 +616,7 @@ def format_rate_message(all_rates: Dict[str, Dict[str, Dict[str, float]]]) -> st
     """
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    message = f"<b>💱 Exchange Rates Update</b>\n"
+    message = f"<b>💱 Exchange Rates We Sell Rate</b>\n"
     message += f"📅 {timestamp}\n\n"
 
     for location, rates in all_rates.items():
@@ -512,7 +633,7 @@ def format_rate_message(all_rates: Dict[str, Dict[str, Dict[str, float]]]) -> st
 
         message += "\n"
 
-    message += "<i>We Sell rates from Jalin &amp; Duta Money Changers</i>\n"
+    message += "<i>We Sell rates from JalinanDuta and MyMoneyMaster</i>\n"
     message += "<i>(Rate for buying foreign currency with MYR)</i>"
 
     return message
@@ -540,18 +661,19 @@ def main():
         # Connect to database
         db_manager.connect()
 
-        # Fetch rates from both locations
+        # Fetch rates from all locations
         locations = [
-            (BUKIT_BINTANG_URL, "Bukit Bintang"),
-            (MASJID_INDIA_URL, "Masjid India")
+            (BUKIT_BINTANG_URL, "JalinanDuta(Bukit Bintang)"),
+            (MASJID_INDIA_URL, "JalinanDuta(Masjid India)"),
+            (MYMONEYMASTER_URL, "MyMoneyMaster(Mid Valley)")
         ]
 
         for url, location in locations:
-            rates = scraper.fetch_rates(url, location)
+            rates, rate_timestamp = scraper.fetch_rates(url, location)
             if rates:
                 all_rates[location] = rates
-                # Save to database
-                db_manager.save_rates(location, rates)
+                # Save to database (pass timestamp if available from source)
+                db_manager.save_rates(location, rates, rate_timestamp)
             else:
                 all_rates[location] = {}
                 logger.warning(f"No rates fetched for {location}")

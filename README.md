@@ -1,17 +1,20 @@
 # KL Exchange Rates
 
-A Python bot that monitors GBP and EUR to MYR exchange rates from Jalin & Duta money changers in Kuala Lumpur, sends notifications via Telegram, and stores historical data in MySQL.
+A Python bot that monitors GBP and EUR to MYR exchange rates from multiple Malaysian money changers, sends notifications via Telegram, and stores historical data in MySQL.
 
 ## Features
 
 - 📊 Scrapes both "We Sell" and "We Buy" rates for GBP→MYR and EUR→MYR
-- 📍 Monitors rates from two locations: Bukit Bintang and Masjid India
+- 📍 Monitors rates from multiple sources:
+  - **Jalin & Duta** - Bukit Bintang location ([https://www.jalinanduta.com/bukit-bintang/](https://www.jalinanduta.com/bukit-bintang/))
+  - **Jalin & Duta** - Masjid India location ([https://www.jalinanduta.com/masjid-india/](https://www.jalinanduta.com/masjid-india/))
+  - **MyMoneyMaster** - Online aggregator ([http://www.mymoneymaster.com.my/Home/full_rate_board](http://www.mymoneymaster.com.my/Home/full_rate_board))
 - 📱 Sends formatted "We Sell" rate updates to Telegram
 - 💾 Stores both rates in MySQL database with timestamps for historical tracking
 - 📝 Comprehensive logging system with rotation
 - ⏰ Designed for automated execution via cron jobs
 - 🤖 Automatic fallback from HTTP requests to Selenium for anti-bot protection
-- 🔍 Multiple parsing strategies to handle different HTML structures
+- 🔍 Multiple parsing strategies to handle different HTML structures from different sources
 - 🐛 Debug mode saves HTML for troubleshooting
 
 ## What are "We Sell" and "We Buy" rates?
@@ -345,7 +348,8 @@ Add new URL and location tuples to the `locations` list in the `main()` function
 locations = [
     (BUKIT_BINTANG_URL, "Bukit Bintang"),
     (MASJID_INDIA_URL, "Masjid India"),
-    ("https://example.com/location3", "Location 3")
+    (MYMONEYMASTER_URL, "MyMoneyMaster"),
+    ("https://example.com/location4", "Location 4")
 ]
 ```
 
@@ -370,18 +374,31 @@ locations = [
 
 ### How the Bot Works
 
-1. **Scraping**: Fetches HTML from Jalin & Duta money changer websites
-2. **Parsing**: Extracts both "We Sell" (green) and "We Buy" (red) rates from table cells
+1. **Scraping**: Fetches HTML from multiple money changer websites
+2. **Parsing**: Uses source-specific parsers to extract both "We Sell" and "We Buy" rates
 3. **Storage**: Saves both rates to MySQL with timestamp and location
 4. **Notification**: Formats and sends "We Sell" rates to Telegram
 5. **Logging**: Records all activities for monitoring and debugging
 
 ### Rate Detection
 
-The bot identifies rates by:
-- Looking for the currency code (GBP, EUR) in table columns
+The bot uses different strategies for different sources:
+
+**Jalin & Duta (Bukit Bintang, Masjid India):**
+- Looking for currency code (GBP, EUR) in table columns
 - Finding cells with CSS class `table-green-color` (We Sell) and `table-red-color` (We Buy)
-- Fallback strategies if CSS classes are not found
+- Fallback to column indices if CSS classes are not found
+
+**MyMoneyMaster:**
+- Finds rows with class `filtersearch`
+- Extracts currency from first column
+- We Buy rate from second column, We Sell rate from third column
+- Captures "Last Updated" timestamp from fourth column (e.g., "at 03:07 PM")
+
+### Timestamp Handling
+
+- **Jalin & Duta**: Uses current system time when rates are fetched
+- **MyMoneyMaster**: Extracts and uses the "Last Updated" timestamp from the website (shows when rates were last updated by the money changer)
 
 ## Support
 
