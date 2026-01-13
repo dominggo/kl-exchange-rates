@@ -1,12 +1,12 @@
 # KL Exchange Rates
 
-A Python bot that monitors GBP and EUR to MYR exchange rates from multiple Malaysian money changers, sends notifications via Telegram, and stores historical data in MySQL.
+A Python bot that monitors GBP, EUR, and TRY to MYR exchange rates from multiple Malaysian money changers, sends notifications via Telegram, and stores historical data in MySQL.
 
 ## Features
 
-- 📊 Scrapes both "We Sell" and "We Buy" rates for GBP→MYR, EUR→MYR, IDR→MYR, and TRY→MYR
+- 📊 Scrapes both "We Sell" and "We Buy" rates for GBP→MYR, EUR→MYR, and TRY→MYR
 - 📍 Monitors rates from multiple sources:
-  - **Google Finance** - Real-time market rates ([GBP-MYR](https://www.google.com/finance/quote/GBP-MYR) | [EUR-MYR](https://www.google.com/finance/quote/EUR-MYR) | [IDR-MYR](https://www.google.com/finance/quote/IDR-MYR) | [TRY-MYR](https://www.google.com/finance/quote/TRY-MYR))
+  - **Google Finance** - Real-time market rates ([GBP-MYR](https://www.google.com/finance/quote/GBP-MYR) | [EUR-MYR](https://www.google.com/finance/quote/EUR-MYR) | [TRY-MYR](https://www.google.com/finance/quote/TRY-MYR))
   - **JalinanDuta** - Bukit Bintang location ([https://www.jalinanduta.com/bukit-bintang/](https://www.jalinanduta.com/bukit-bintang/))
   - **JalinanDuta** - Masjid India location ([https://www.jalinanduta.com/masjid-india/](https://www.jalinanduta.com/masjid-india/))
   - **MyMoneyMaster** - Online aggregator ([http://www.mymoneymaster.com.my/Home/full_rate_board](http://www.mymoneymaster.com.my/Home/full_rate_board))
@@ -20,8 +20,8 @@ A Python bot that monitors GBP and EUR to MYR exchange rates from multiple Malay
 
 ## What are "We Sell" and "We Buy" rates?
 
-- **We Sell** (Green column, higher rate): The rate at which the money changer **sells foreign currency to you**. Use this when you want to **buy GBP/EUR with MYR**.
-- **We Buy** (Red column, lower rate): The rate at which the money changer **buys foreign currency from you**. Use this when you want to **sell GBP/EUR for MYR**.
+- **We Sell** (Green column, higher rate): The rate at which the money changer **sells foreign currency to you**. Use this when you want to **buy GBP/EUR/TRY with MYR**.
+- **We Buy** (Red column, lower rate): The rate at which the money changer **buys foreign currency from you**. Use this when you want to **sell GBP/EUR/TRY for MYR**.
 
 The Telegram notification shows "We Sell" rates as these are typically what customers need when planning to buy foreign currency.
 
@@ -182,7 +182,7 @@ crontab -e
 |--------|------|-------------|
 | id | INT | Auto-increment primary key |
 | location | VARCHAR(100) | Money changer location (Bukit Bintang, Masjid India) |
-| currency | VARCHAR(10) | Currency code (GBP, EUR) |
+| currency | VARCHAR(10) | Currency code (GBP, EUR, TRY) |
 | we_sell_rate | DECIMAL(10,4) | "We Sell" rate (money changer sells to customer) |
 | we_buy_rate | DECIMAL(10,4) | "We Buy" rate (money changer buys from customer) |
 | timestamp | DATETIME | When the rates were fetched |
@@ -386,13 +386,13 @@ locations = [
 The bot uses different strategies for different sources:
 
 **Google Finance:**
-- Fetches separate pages for GBP-MYR, EUR-MYR, IDR-MYR, and TRY-MYR
+- Fetches separate pages for GBP-MYR, EUR-MYR, and TRY-MYR
 - Extracts rate from HTML using class `YMlKec fxKbKc`
 - Uses the same rate for both We Buy and We Sell (market rate)
 - Real-time market exchange rates
 
 **JalinanDuta (Bukit Bintang, Masjid India):**
-- Looking for currency code (GBP, EUR, IDR, TRY) in table columns
+- Looking for currency code (GBP, EUR, TRY) in table columns
 - Finding cells with CSS class `table-green-color` (We Sell) and `table-red-color` (We Buy)
 - Fallback to column indices if CSS classes are not found
 
