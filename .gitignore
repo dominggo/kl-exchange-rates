@@ -1,5 +1,5 @@
-.claude
 my.json
 *.log
 __pycache__/
 *.pyc
+.claude/
